@@ -1,6 +1,26 @@
 import React, { useEffect, useState } from "react";
 import twitterLogo from "./assets/twitter-logo.svg";
 import "./App.css";
+import idl from './idl.json'
+
+import { Connection, PublicKey, clusterApiUrl } from '@solana/web3.js';
+import { Program, Provider, web3 } from '@project-serum/anchor';
+
+import kp from './keypair.json'
+
+const { SystemProgram, Keypair} = web3;
+
+const arr = Object.values(kp._keypair.secretKey);
+const secret = new Uint8Array(arr);
+let baseAccount = web3.Keypair.fromSecretKey(secret);
+
+const programID = new PublicKey(idl.metadata.address);
+
+const network = clusterApiUrl('devnet');
+
+const opts = {
+  preflightCommitment: "processed"
+}
 
 // Mude isso para seu Twitter se quiser.
 const TWITTER_HANDLE = "hit_in_america";
@@ -69,14 +89,38 @@ const App = () => {
     setInputValue(value)
   }
 
+  const getProvider = () => {
+    const connection = new Connection(network, opts.preflightCommitment);
+    const provider = new Provider(
+      connection, window.solana, opts.preflightCommitment,
+    );
+    return provider;
+  }
+
   const sendGif = async () => {
-    if(inputValue.length > 0){
-      console.log("Gif link: ", inputValue)
-      setGifList([...gifList, inputValue])
-      setInputValue("")
-    }else{
-      console.log("Input vazio, tente novamente")
+    if(inputValue.length === 0){
+      console.log("Por favor insira um link")
+      return
     }
+
+    setInputValue("")
+    console.log("Link do GIF: ", inputValue)
+      try{
+        const provider = getProvider();
+        const program = new Program(idl, programID, provider);
+
+        await program.rpc.addGif(inputValue, {
+          accounts: {
+            baseAccount: baseAccount.publicKey,
+            user: provider.wallet.publicKey,
+        },
+      });
+      console.log("GIF enviado com sucesso!! ", inputValue)
+      await getGifList();
+    }catch(error){
+      console.log("Erro ao enviar GIF ", error)
+    }
+ 
   }
 
   const renderNotConnectedContainer = () => (
@@ -88,7 +132,37 @@ const App = () => {
     </button>
   )
 
-  const renderConnectedContainer = () => (
+  const createGifAccount = async () => {
+    try{
+      const provider = getProvider();
+      const program = new Program(idl, programID, provider);
+      console.log("ping")
+      await program.rpc.startStuffOff({
+        accounts:{
+          baseAccount: baseAccount.publicKey,
+          user: provider.wallet.publicKey,
+          systemProgram: SystemProgram.programId,
+        },
+        signers: [baseAccount]
+      });
+      console.log("BaseAccount criado com sucesso com o endereço: ", baseAccount.publicKey.toString())
+      await getGifList()
+    }catch(error){
+      console.log("Erro criando uma nova BaseAccount:", error)
+    }
+  }
+
+  const renderConnectedContainer = () => {
+    if(gifList === null){
+      return(
+        <div className="connected-container">
+        <button className="cta-button submit-gif-button" onClick={createGifAccount}>
+          Fazer inicialização única para conta do programa GIF
+        </button>
+      </div>
+      )
+    }else{
+      return(
     <div className="connected-container">
       <form
         onSubmit={(e) => {
@@ -107,14 +181,16 @@ const App = () => {
         </button>
       </form>
       <div className="gif-grid">
-        {gifList.map((gif) => (
-          <div className="gif-item" key={gif}>
-            <img src={gif} alt={gif} />
+        {gifList.map((item, index) => (
+          <div className="gif-item" key={index}>
+            <img src={item.gifLink}/>
           </div>
         ))}
       </div>
     </div>
-  )
+    )
+  }
+}
 
   useEffect(() => {
     const onLoad = async () => {
@@ -124,11 +200,26 @@ const App = () => {
     return () => window.removeEventListener("load", onLoad);
   }, []);
 
+  const getGifList = async() => {
+    try{
+      const provider = getProvider();
+      const program = new Program(idl, programID, provider);
+      const account = await program.account.baseAccount.fetch(baseAccount.publicKey);
+      
+      console.log("Conta obtida", account)
+      setGifList(account.gifList)
+    }catch(error){
+      console.log("Erro em getGifList: ", error);
+      setGifList(null);
+    }
+  }
+
   useEffect(() =>{
     if(walletAddress){
       console.log("Obtendo lista de GIFs...")
+      getGifList()
 
-      setGifList(TEST_GIFS);
+      
     }
   }, [walletAddress])
 
